@@ -7,6 +7,8 @@ import { connectDB } from "./db/connect.js";
 import { env } from "./config/env.js";
 import { logger } from "./utils/logger.js";
 
+
+
 const start = async () => {
   // 1. Connect to MongoDB (exits process on failure)
   await connectDB();

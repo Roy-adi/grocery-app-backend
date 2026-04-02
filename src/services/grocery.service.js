@@ -95,7 +95,7 @@ export const getUserGroceryItems = async (userId, query) => {
   const {
     page = 1,
     limit = 10,
-    sortBy = "createdAt",
+    sort = "createdAt",
     sortOrder = "desc",
     keyword,
     category_id,
@@ -154,17 +154,17 @@ export const getUserGroceryItems = async (userId, query) => {
     "quantity",
   ];
 
-  const sortField = allowedSortFields.includes(sortBy) ? sortBy : "createdAt";
+  const sortField = allowedSortFields.includes(sort) ? sort : "createdAt";
   const sortDirection = sortOrder === "asc" ? 1 : -1;
 
-  const sort = {
+  const sorts = {
     [sortField]: sortDirection,
   };
 
   // ─── Query Execution ─────────────────────────────────────────────────
   const [items, total] = await Promise.all([
     GroceryItem.find(filter)
-      .sort(sort)
+      .sort(sorts)
       .skip(skip)
       .limit(limitNumber)
       .populate("category_id", "name")
@@ -172,7 +172,7 @@ export const getUserGroceryItems = async (userId, query) => {
 
     GroceryItem.countDocuments(filter),
   ]);
-
+   
   // ─── Response Shape ──────────────────────────────────────────────────
   return {
     items,
@@ -453,8 +453,6 @@ export const getgroceryItemDetail = async (userId, itemId) => {
 export const getGroceryInsight = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const now = new Date();
-  console.log(userObjectId)
-
   const [stats] = await GroceryItem.aggregate([
     {
       $match: {

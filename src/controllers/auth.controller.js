@@ -70,6 +70,7 @@ export const logout = asyncHandler(async (req, res) => {
 
 // ─── POST /api/v1/auth/refresh ────────────────────────────────────────────────
 export const refresh = asyncHandler(async (req, res) => {
+  console.log(req.body)
   // 1. From cookies (web)
   let incomingRefreshToken = req.cookies?.refreshToken;
 
