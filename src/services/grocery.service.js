@@ -41,7 +41,7 @@ export const createGroceryItem = async (userId, data) => {
         { isSeeded: true }, // global seeded category
       ],
     }).session(session);
-    
+
     if (!category) {
       throw new ApiError(404, "Category not found or not accessible");
     }
@@ -163,7 +163,12 @@ export const getUserGroceryItems = async (userId, query) => {
 
   // ─── Query Execution ─────────────────────────────────────────────────
   const [items, total] = await Promise.all([
-    GroceryItem.find(filter).sort(sort).skip(skip).limit(limitNumber).lean(),
+    GroceryItem.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNumber)
+      .populate("category_id", "name")
+      .lean(),
 
     GroceryItem.countDocuments(filter),
   ]);
@@ -182,6 +187,90 @@ export const getUserGroceryItems = async (userId, query) => {
   };
 };
 
+// grocery bulk add
+
+export const bulkCreateGroceryItems = async (userId, items) => {
+  // 1. Extract all unique category IDs from the incoming items
+  const categoryIds = [...new Set(items.map((item) => item.category_id))];
+
+  // 2. Validate that all category IDs exist in DB and belong to this user (or are global)
+  const existingCategories = await Category.find({
+    _id: { $in: categoryIds },
+    deleted_at: null,
+  }).select("_id");
+
+  const existingCategoryIds = new Set(
+    existingCategories.map((cat) => cat._id.toString())
+  );
+
+  const invalidCategories = categoryIds.filter(
+    (id) => !existingCategoryIds.has(id.toString())
+  );
+
+  if (invalidCategories.length > 0) {
+    throw new ApiError(
+      400,
+      `Invalid or non-existent category IDs: ${invalidCategories.join(", ")}`
+    );
+  }
+
+  // 3. Prepare documents for insertMany
+  const now = new Date();
+  const docs = items.map((item) => ({
+    user_id: userId,
+    name: item.name,
+    category_id: item.category_id,
+    quantity: item.quantity,
+    unit: item.unit,
+    purchased: item.purchased ?? false,
+    due_date: item.due_date ?? null,
+    purchased_date: null,
+    notes: item.notes ?? null,
+    priority: item.priority ?? "medium",
+    deleted_at: null,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  // 4. Bulk insert — ordered: false continues on error, collecting all failures
+  let insertedDocs;
+  try {
+    insertedDocs = await GroceryItem.insertMany(docs, {
+      ordered: false,      // don't abort on first error; attempt all
+      rawResult: false,    // return inserted documents, not the raw MongoDB result
+    });
+  } catch (err) {
+    // BulkWriteError: some inserts succeeded, some failed
+    if (err.name === "MongoBulkWriteError") {
+      const succeeded = err.insertedDocs ?? [];
+      const writeErrors = err.writeErrors ?? [];
+
+      return {
+        total: items.length,
+        inserted_count: succeeded.length,
+        failed_count: writeErrors.length,
+        inserted: succeeded,
+        errors: writeErrors.map((e) => ({
+          index: e.index,
+          message: e.errmsg,
+          item: items[e.index],
+        })),
+      };
+    }
+
+    // Unknown error — rethrow for global error handler
+    throw new ApiError(500, "Bulk insert failed", err);
+  }
+
+  // 5. All inserts succeeded
+  return {
+    total: items.length,
+    inserted_count: insertedDocs.length,
+    failed_count: 0,
+    inserted: insertedDocs,
+    errors: [],
+  };
+};
+
 /**
  * edit grocery items for a user.
  */
@@ -189,7 +278,6 @@ export const updateGroceryItem = async (userId, itemId, data) => {
   if (!mongoose.Types.ObjectId.isValid(itemId)) {
     throw new ApiError(400, "Invalid item ID");
   }
-
   const session = await mongoose.startSession();
 
   try {
@@ -234,7 +322,10 @@ export const updateGroceryItem = async (userId, itemId, data) => {
     if (updatePayload.category_id) {
       const category = await Category.findOne({
         _id: updatePayload.category_id,
-        user_id: userId,
+        $or: [
+          { user_id: userId }, // user-owned category
+          { isSeeded: true }, // global seeded category
+        ],
       }).session(session);
 
       if (!category) {
@@ -283,12 +374,86 @@ export const updateGroceryItem = async (userId, itemId, data) => {
   }
 };
 
+
+
+/**
+ * Soft-delete a grocery item (sets deleted_at instead of removing from DB).
+ */
+export const softDeleteGroceryItem = async (userId, itemId) => {
+  if (!mongoose.Types.ObjectId.isValid(itemId)) {
+    throw new ApiError(400, "Invalid item ID");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+
+    // 1️⃣ Find item (INCLUDING deleted ones)
+    const item = await GroceryItem.findOne(
+      { _id: itemId, user_id: userId },
+      null,
+      { session, includeDeleted: true }, // bypass pre('find')
+    );
+
+    if (!item) {
+      throw new ApiError(404, "Grocery item not found");
+    }
+
+    // 2️⃣ If already deleted → idempotent success
+    if (item.deleted_at) {
+      await session.commitTransaction();
+      session.endSession();
+      return { alreadyDeleted: true };
+    }
+
+    // 3️⃣ Soft delete
+    item.deleted_at = new Date();
+    await item.save({ session, validateBeforeSave: false });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return { deleted: true };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
+};
+
+export const getgroceryItemDetail = async (userId, itemId) => {
+  // 1. Validate inputs
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    throw new ApiError(400, "Invalid user ID");
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(itemId)) {
+    throw new ApiError(400, "Invalid item ID");
+  }
+
+  // 2. Fetch item (ensure item belongs to user)
+  const item = await GroceryItem.findOne({
+    _id: itemId,
+    user_id: userId,
+  }).lean();
+
+  // 3. Handle not found
+  if (!item) {
+    throw new ApiError(404, "Grocery item not found");
+  }
+
+  return item;
+};
+
+
 /**
  *  grocery service insight
  */
-export const getGroceryInsights = async (userId) => {
+export const getGroceryInsight = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const now = new Date();
+  console.log(userObjectId)
 
   const [stats] = await GroceryItem.aggregate([
     {
@@ -380,50 +545,4 @@ export const getGroceryInsights = async (userId) => {
     },
     byCategory: stats.byCategory,
   };
-};
-
-/**
- * Soft-delete a grocery item (sets deleted_at instead of removing from DB).
- */
-export const softDeleteGroceryItem = async (userId, itemId) => {
-  if (!mongoose.Types.ObjectId.isValid(itemId)) {
-    throw new ApiError(400, "Invalid item ID");
-  }
-
-  const session = await mongoose.startSession();
-
-  try {
-    session.startTransaction();
-
-    // 1️⃣ Find item (INCLUDING deleted ones)
-    const item = await GroceryItem.findOne(
-      { _id: itemId, user_id: userId },
-      null,
-      { session, includeDeleted: true }, // bypass pre('find')
-    );
-
-    if (!item) {
-      throw new ApiError(404, "Grocery item not found");
-    }
-
-    // 2️⃣ If already deleted → idempotent success
-    if (item.deleted_at) {
-      await session.commitTransaction();
-      session.endSession();
-      return { alreadyDeleted: true };
-    }
-
-    // 3️⃣ Soft delete
-    item.deleted_at = new Date();
-    await item.save({ session, validateBeforeSave: false });
-
-    await session.commitTransaction();
-    session.endSession();
-
-    return { deleted: true };
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    throw error;
-  }
 };

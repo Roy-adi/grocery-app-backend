@@ -30,7 +30,7 @@ export const registerUser = async ({ name, email, password }) => {
     throw new ApiError(409, "Email already registered");
   }
 
-    //  Generate avatar
+  //  Generate avatar
   const avatar = generateAvatarUrl(name);
 
   // 2. Create user (password hashed in pre-save hook on the model)
@@ -38,7 +38,7 @@ export const registerUser = async ({ name, email, password }) => {
     name,
     email,
     password,
-     role: "user",
+    role: "user",
     authProviders: ["local"],
     avatar,
   });
@@ -62,6 +62,8 @@ export const registerUser = async ({ name, email, password }) => {
  * @returns {{ user, accessToken, refreshToken }}
  */
 export const loginUser = async ({ email, password }) => {
+
+  console.log(email, password)
   // 1. Find user — explicitly select password & lock fields (they're excluded by default)
   const user = await User.findOne({ email }).select(
     "+password +refreshTokens +loginAttempts +lockUntil +authProviders",
@@ -197,7 +199,7 @@ export const refreshTokens = async (incomingRefreshToken) => {
 
   await user.save({ validateBeforeSave: false });
 
-  return { accessToken, refreshToken };
+  return { user: sanitizeUser(user), accessToken, refreshToken };
 };
 
 export const getCurrentUser = async (userId) => {
@@ -208,6 +210,62 @@ export const getCurrentUser = async (userId) => {
   }
 
   return sanitizeUser(user);
+};
+
+// update profile service
+
+export const editProfileService = async (userId, data) => {
+  if (!userId) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (!data || typeof data !== "object") {
+    throw new ApiError(400, "Invalid request data");
+  }
+
+  const { name, password } = data;
+
+  const user = await User.findById(userId).select("+password");
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  let isModified = false;
+
+  //  Update name
+  if (name && name.trim() !== user.name) {
+    user.name = name.trim();
+    isModified = true;
+  }
+
+  //  Update password
+  if (password) {
+    const isSamePassword = await user.isPasswordCorrect(password);
+
+    if (isSamePassword) {
+      throw new ApiError(
+        400,
+        "New password must be different from old password",
+      );
+    }
+
+    user.password = password; // pre-save hook will hash
+    isModified = true;
+  }
+
+  if (!isModified) {
+    throw new ApiError(400, "No changes detected");
+  }
+
+  //  Correct save
+  await user.save();
+
+  //  Safe return
+  const userObj = user.toObject();
+  delete userObj.password;
+
+  return userObj;
 };
 
 /**
@@ -250,7 +308,6 @@ const attachRefreshToken = async (user, refreshToken) => {
 
   await user.save({ validateBeforeSave: false });
 };
-
 
 export const generateAvatarUrl = (name) => {
   const encodedName = encodeURIComponent(name.trim());

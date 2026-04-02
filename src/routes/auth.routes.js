@@ -5,7 +5,7 @@ import * as authController from "../controllers/auth.controller.js";
 import { validate } from "../middlewares/validate.js";
 import { authenticate } from "../middlewares/auth.js";
 import { generalLimiter, loginLimiter } from "../middlewares/rateLimiter.js";
-import { signupSchema, loginSchema } from "../validators/auth.validator.js";
+import { signupSchema, loginSchema, profileUpdateSchema } from "../validators/auth.validator.js";
 
 const router = Router();
 
@@ -14,12 +14,14 @@ const router = Router();
 
 router.post("/signup", validate(signupSchema), authController.signup);
 
-router.post("/login", loginLimiter, validate(loginSchema), authController.login);
+router.post("/login",  validate(loginSchema), authController.login);
 
 router.get("/logout", authenticate, authController.logout);
 
 router.get("/refresh", authController.refresh);
 
 router.get("/me", authenticate,generalLimiter, authController.getMe);
+
+router.post("/update", authenticate,generalLimiter, validate(profileUpdateSchema), authController.updateprofile);
 
 export default router;

@@ -5,23 +5,36 @@ import { Router } from "express";
 import * as groceryController from "../controllers/grocery.controller.js";
 import { validate } from "../middlewares/validate.js";
 import { authenticate } from "../middlewares/auth.js";
-import { createGroceryItemSchema } from "../validators/grocery.validator.js";
+import {
+  bulkCreateGrocerySchema,
+  createGroceryItemSchema,
+} from "../validators/grocery.validator.js";
 import { generalLimiter } from "../middlewares/rateLimiter.js";
 
 const router = Router();
 
 // Apply authenticate to every route in this file
-router.use(authenticate);     //  sets req.user
-router.use(generalLimiter);   //  now has access to req.user
+router.use(authenticate); //  sets req.user
+router.use(generalLimiter); //  now has access to req.user
 
 router
   .route("/")
   .post(validate(createGroceryItemSchema), groceryController.createGroceryItem)
   .get(groceryController.getUserGroceryItems);
 
+router.post(
+  "/bulk",
+  validate(bulkCreateGrocerySchema),
+  groceryController.bulkCreateGrocery,
+);
+
+router.route("/stats/data").get(groceryController.getGroceryInsights);
+
 router.route("/update/:id").patch(groceryController.updateGroceryItem);
 
-router.route("/:id").delete(groceryController.softDeleteGroceryItem);
+router.route("/:id").get(groceryController.getgroceryItemDetails);
 
+
+router.route("/:id").delete(groceryController.softDeleteGroceryItem);
 
 export default router;

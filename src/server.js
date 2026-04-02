@@ -12,9 +12,9 @@ const start = async () => {
   await connectDB();
 
   // 2. Start HTTP server
-  const server = app.listen(env.PORT, () => {
-    logger.info(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
-  });
+const server = app.listen(env.PORT, "0.0.0.0", () => {
+  logger.info(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+});
 
   // ─── Graceful Shutdown ─────────────────────────────────────────────────────
   // Lets in-flight requests finish before closing on SIGTERM (Render sends this).

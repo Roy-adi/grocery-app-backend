@@ -37,6 +37,13 @@ export const createGroceryItemSchema = z.object({
 });
 
 
+export const bulkCreateGrocerySchema = z.object({
+  items: z
+    .array(createGroceryItemSchema)
+    .min(1, "At least one item is required")
+    .max(100, "Cannot insert more than 100 items at once"), 
+});
+
 export const updateGroceryItemSchema = z
   .object({
     name: z
