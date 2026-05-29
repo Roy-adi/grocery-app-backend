@@ -50,6 +50,8 @@ export const env = {
 
   cors: {
     allowedOrigins: [
+      process.env.CLIENT_WEB_URL || "http://localhost:5173",
+      process.env.CLIENT_WEB_URL || "http://localhost:5174",
       process.env.CLIENT_WEB_URL || "http://localhost:3000",
       process.env.CLIENT_MOBILE_URL || "exp://localhost:8081",
     ],

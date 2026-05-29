@@ -91,6 +91,8 @@ export const createGroceryItem = async (userId, data) => {
 /**
  * List grocery items for a user.
  */
+
+
 export const getUserGroceryItems = async (userId, query) => {
   const {
     page = 1,
@@ -107,41 +109,51 @@ export const getUserGroceryItems = async (userId, query) => {
 
   // ─── Pagination Setup ────────────────────────────────────────────────
   const pageNumber = Math.max(parseInt(page, 10), 1);
-  const limitNumber = Math.min(Math.max(parseInt(limit, 10), 1), 100); // cap at 100
+  const limitNumber = Math.min(Math.max(parseInt(limit, 10), 1), 100);
   const skip = (pageNumber - 1) * limitNumber;
 
   // ─── Base Query ──────────────────────────────────────────────────────
+  // FIX: Cast userId to ObjectId — string vs ObjectId mismatch causes
+  // countDocuments to use a cached/different plan than find() in some
+  // Mongoose versions, producing inconsistent results across pages.
   const filter = {
-    user_id: userId,
+    user_id: new mongoose.Types.ObjectId(userId),
+    deleted_at: null, // FIX: exclude soft-deleted docs consistently
   };
 
   // ─── Filters ─────────────────────────────────────────────────────────
 
   if (category_id) {
-    filter.category_id = category_id;
+    // FIX: Cast to ObjectId — passing raw string can miss matches in find()
+    // even though countDocuments may still count them (index vs collection scan)
+    filter.category_id = new mongoose.Types.ObjectId(category_id);
   }
 
-  if (typeof purchased === "string") {
+  if (typeof purchased === "string" && purchased !== "") {
     filter.purchased = purchased === "true";
   }
 
-  if (priority) {
+  if (priority && priority !== "") {
     filter.priority = priority;
   }
 
   // Keyword Search (case-insensitive)
-  if (keyword) {
-    filter.name = { $regex: keyword, $options: "i" };
+  if (keyword && keyword.trim() !== "") {
+    filter.name = { $regex: keyword.trim(), $options: "i" };
   }
 
-  // Date Filtering (on createdAt OR due_date → design choice)
+  // FIX: Only set createdAt filter if values are actually valid non-empty strings
   if (startDate || endDate) {
-    filter.createdAt = {};
-    if (startDate) {
-      filter.createdAt.$gte = new Date(startDate);
+    const dateFilter = {};
+    if (startDate && !isNaN(new Date(startDate))) {
+      dateFilter.$gte = new Date(startDate);
     }
-    if (endDate) {
-      filter.createdAt.$lte = new Date(endDate);
+    if (endDate && !isNaN(new Date(endDate))) {
+      dateFilter.$lte = new Date(endDate);
+    }
+    // Only apply if at least one bound is valid — avoids attaching empty {}
+    if (Object.keys(dateFilter).length > 0) {
+      filter.createdAt = dateFilter;
     }
   }
 
@@ -157,22 +169,22 @@ export const getUserGroceryItems = async (userId, query) => {
   const sortField = allowedSortFields.includes(sort) ? sort : "createdAt";
   const sortDirection = sortOrder === "asc" ? 1 : -1;
 
-  const sorts = {
-    [sortField]: sortDirection,
-  };
+  const sorts = { [sortField]: sortDirection };
 
   // ─── Query Execution ─────────────────────────────────────────────────
+  // FIX: Both queries must use the exact same `filter` object.
+  // Spread to avoid any accidental mutation between the two calls.
   const [items, total] = await Promise.all([
-    GroceryItem.find(filter)
+    GroceryItem.find({ ...filter })
       .sort(sorts)
       .skip(skip)
       .limit(limitNumber)
       .populate("category_id", "name")
       .lean(),
 
-    GroceryItem.countDocuments(filter),
+    GroceryItem.countDocuments({ ...filter }),
   ]);
-   
+
   // ─── Response Shape ──────────────────────────────────────────────────
   return {
     items,

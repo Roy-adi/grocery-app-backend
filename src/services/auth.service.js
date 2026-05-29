@@ -117,6 +117,7 @@ export const loginUser = async ({ email, password }) => {
  *  GOOGLE AUTH (LOGIN + REGISTER + LINKING)
  */
 export const googleAuth = async ({ name, email, googleId, avatar }) => {
+  console.log( name, email, googleId, avatar );
   let user = await User.findOne({
     $or: [{ email }, { googleId }],
   }).select("+refreshTokens");
